@@ -1,0 +1,6 @@
+*.o
+*.elf
+*.bin
+canny_rv
+build/
+*.raw
