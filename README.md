@@ -2,7 +2,7 @@
 Phase 1: Environment Setup Complete.
 
 ### Verified Tools:
-* **WSL2:** Ubuntu 24.04 on D: Drive
+* **WSL2:** Ubuntu 24.04
 * **Compiler:** riscv64-unknown-elf-g++ (GCC 15)
 * **Emulator:** QEMU 9.x (RISC-V 64-bit)
 * **Libraries:** GoogleTest installed
