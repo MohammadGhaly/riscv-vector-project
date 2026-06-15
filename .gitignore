@@ -1,4 +1,12 @@
-*.o
+# Compiler Optimization Sweep Binaries
+app_O*
+gen
+
+# Editor Backup Files
+*.save
+
+# Verification PNG Images
+*.png*.o
 *.elf
 *.bin
 canny_rv
