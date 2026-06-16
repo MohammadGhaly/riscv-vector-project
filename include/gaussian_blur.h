@@ -1,15 +1,16 @@
 #pragma once
 #include <cstdint>
 
+// 'inline' added to prevent ODR (One Definition Rule) violations
 // The 5x5 Gaussian Kernel Weights
-const int GAUSSIAN_KERNEL_5X5[5][5] = {
+inline const int GAUSSIAN_KERNEL_5X5[5][5] = {
     {1,  4,  7,  4, 1},
     {4, 16, 26, 16, 4},
     {7, 26, 41, 26, 7},
     {4, 16, 26, 16, 4},
     {1,  4,  7,  4, 1}
 };
-const int GAUSSIAN_SUM = 273;
+inline const int GAUSSIAN_SUM = 273;
 
 // Generic gaussian blur function
 template <typename PixelType, typename AccType>
@@ -48,3 +49,4 @@ void gaussian_blur_5x5(const PixelType* input, PixelType* output, int width, int
             output[out_index] = static_cast<PixelType>(sum / static_cast<AccType>(GAUSSIAN_SUM));
         }
     }
+}
