@@ -40,7 +40,7 @@ Image image_load(const char* filename, int width, int height) {
         std::exit(1);
     }
 
-    std::fread(img.data, sizeof(uint8_t), width * height, file);
+    (void)std::fread(img.data, sizeof(uint8_t), width * height, file);
     std::fclose(file);
     return img;
 }
