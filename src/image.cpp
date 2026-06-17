@@ -1,5 +1,6 @@
 #include "../include/image.h"
-#include <cstdio>   // gives us fast C-style file functions (fopen, fread, fwrite)
+#include <cstdio>
+#include <cstring>  // for memset
 #include <iostream>
 
 Image image_create(int width, int height) {
@@ -7,22 +8,22 @@ Image image_create(int width, int height) {
     img.width = width;
     img.height = height;
 
-    // Memory Flattening: To optimize data locality, a 2D pixel array is stored as a 1D linear buffer
+    // aligned_alloc(64, ...) ensures 64-byte alignment required for RVV vector loads later.
+    // Unlike calloc, aligned_alloc does NOT zero memory, so we memset manually.
+    img.data = static_cast<uint8_t*>(aligned_alloc(64, width * height * sizeof(uint8_t)));
 
-    img.data = (uint8_t*)std::calloc(width * height, sizeof(uint8_t));
-
-    // Fault Tolerance: Always validate heap allocations.
-    // If the virtual address space is exhausted, calloc returns a null pointer (nullptr).
     if (img.data == nullptr) {
         std::cerr << "Fatal Error: Heap allocation failed for image buffer.\n";
         std::exit(1);
     }
+
+    memset(img.data, 0, width * height * sizeof(uint8_t));
     return img;
 }
 
 void image_free(Image& img) {
     if (img.data != nullptr) {
-        std::free(img.data); // Deallocate the heap block returning ownership to the system allocator.
+        std::free(img.data);
         img.data = nullptr;
     }
     img.width = 0;
@@ -30,21 +31,17 @@ void image_free(Image& img) {
 }
 
 Image image_load(const char* filename, int width, int height) {
-    // Instantiate our structural container and allocate the necessary heap footprint
     Image img = image_create(width, height);
 
     std::FILE* file = std::fopen(filename, "rb");
     if (!file) {
         std::cerr << "IO Error: Failed to open file path '" << filename << "' for reading.\n";
-        image_free(img); // this is to clean up heap allocations to avoid memory leaks before termination.
+        image_free(img);
         std::exit(1);
     }
 
-    // Direct Block Transfer: fread fetches (width * height) elements of 1-byte size and copies
-    //them straight from the kernel cache into our userspace heap buffer pointer (img.data)
     std::fread(img.data, sizeof(uint8_t), width * height, file);
-
-    std::fclose(file); // Resource cleanup: release the file descriptor back to the operating system kernel.
+    std::fclose(file);
     return img;
 }
 
@@ -55,7 +52,6 @@ void image_save(const Image& img, const char* filename) {
         std::exit(1);
     }
 
-    // stream the raw sequence from RAM directly to the underlying filesystem storage layout.
     std::fwrite(img.data, sizeof(uint8_t), img.width * img.height, file);
     std::fclose(file);
 }
