@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include "image.h"
 
 // Generates a white filled rectangle on a black background.
