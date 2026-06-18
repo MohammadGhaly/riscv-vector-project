@@ -14,7 +14,7 @@ RV_CXX     = riscv64-linux-gnu-g++
 # FIX B: Add -L so QEMU can find the RISC-V runtime
 #         loader at /usr/riscv64-linux-gnu/lib/ld-linux-riscv64-lp64d.so.1
 # ───────────────────────────────────────────────────
-QEMU_BIN = $(HOME)/riscv-gnu-toolchain/qemu/build/qemu-riscv64
+QEMU_BIN = /usr/bin/qemu-riscv64
 QEMU_L   = /usr/riscv64-linux-gnu
 QEMU     = $(QEMU_BIN) -L $(QEMU_L)
 
