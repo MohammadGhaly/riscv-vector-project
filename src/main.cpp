@@ -103,31 +103,112 @@ int main(int argc, char** argv) {
         sobel_direction<int, uint8_t>(gx, gy, img_dir.data, width, height);
     c1 = read_cycles();
     uint64_t cycles_dir = (c1 - c0) / RUNS;
+// ── Profiling Summary ──────────────────────────────────────────────────
 
-    // ── Profiling Summary ──────────────────────────────────────────────────
-    // QEMU simulates cycle counter at 1 GHz so: ms = cycles / 1,000,000
-    double ms_gaussian = cycles_gaussian / 1e6;
-    double ms_sobel    = cycles_sobel    / 1e6;
-    double ms_mag_l1   = cycles_mag_l1   / 1e6;
-    double ms_mag_l2   = cycles_mag_l2   / 1e6;
-    double ms_dir      = cycles_dir      / 1e6;
-    double ms_total    = ms_gaussian + ms_sobel + ms_mag_l1 + ms_mag_l2 + ms_dir;
+// Approximate conversion assuming 1 GHz simulated clock
+double ms_gaussian = cycles_gaussian / 1e6;
+double ms_sobel    = cycles_sobel    / 1e6;
+double ms_mag_l1   = cycles_mag_l1   / 1e6;
+double ms_mag_l2   = cycles_mag_l2   / 1e6;
+double ms_dir      = cycles_dir      / 1e6;
 
-    std::cout << "\n=== Profiling Results (avg over " << RUNS << " runs) ===\n";
-    std::cout << "Gaussian Blur   : " << ms_gaussian
-              << " ms (" << 100.0 * ms_gaussian / ms_total << "%)\n";
-    std::cout << "Sobel Gx/Gy     : " << ms_sobel
-              << " ms (" << 100.0 * ms_sobel / ms_total << "%)\n";
-    std::cout << "Magnitude L1    : " << ms_mag_l1
-              << " ms (" << 100.0 * ms_mag_l1 / ms_total << "%)\n";
-    std::cout << "Magnitude L2    : " << ms_mag_l2
-              << " ms (" << 100.0 * ms_mag_l2 / ms_total << "%)\n";
-    std::cout << "Direction       : " << ms_dir
-              << " ms (" << 100.0 * ms_dir / ms_total << "%)\n";
-    std::cout << "Total           : " << ms_total << " ms\n";
+// Two valid pipeline configurations
+double total_l1 =
+    ms_gaussian +
+    ms_sobel +
+    ms_mag_l1 +
+    ms_dir;
 
-    delete[] gx;
-    delete[] gy;
+double total_l2 =
+    ms_gaussian +
+    ms_sobel +
+    ms_mag_l2 +
+    ms_dir;
+
+// Bottleneck detection
+uint64_t max_cycles = cycles_gaussian;
+const char* bottleneck = "Gaussian Blur";
+
+if (cycles_sobel > max_cycles) {
+    max_cycles = cycles_sobel;
+    bottleneck = "Sobel Gx/Gy";
+}
+
+if (cycles_mag_l1 > max_cycles) {
+    max_cycles = cycles_mag_l1;
+    bottleneck = "Magnitude L1";
+}
+
+if (cycles_mag_l2 > max_cycles) {
+    max_cycles = cycles_mag_l2;
+    bottleneck = "Magnitude L2";
+}
+
+if (cycles_dir > max_cycles) {
+    max_cycles = cycles_dir;
+    bottleneck = "Direction";
+}
+
+std::cout << "\n========================================\n";
+std::cout << "PHASE 5 PROFILING RESULTS\n";
+std::cout << "Average over " << RUNS << " runs\n";
+std::cout << "========================================\n";
+
+std::cout << "\nGaussian Blur\n";
+std::cout << "  Cycles : " << cycles_gaussian << "\n";
+std::cout << "  Time   : " << ms_gaussian << " ms\n";
+
+std::cout << "\nSobel Gx/Gy\n";
+std::cout << "  Cycles : " << cycles_sobel << "\n";
+std::cout << "  Time   : " << ms_sobel << " ms\n";
+
+std::cout << "\nMagnitude L1\n";
+std::cout << "  Cycles : " << cycles_mag_l1 << "\n";
+std::cout << "  Time   : " << ms_mag_l1 << " ms\n";
+
+std::cout << "\nMagnitude L2\n";
+std::cout << "  Cycles : " << cycles_mag_l2 << "\n";
+std::cout << "  Time   : " << ms_mag_l2 << " ms\n";
+
+std::cout << "\nDirection\n";
+std::cout << "  Cycles : " << cycles_dir << "\n";
+std::cout << "  Time   : " << ms_dir << " ms\n";
+
+std::cout << "\n----------------------------------------\n";
+std::cout << "Pipeline (L1 Magnitude) : "
+          << total_l1 << " ms\n";
+
+std::cout << "Pipeline (L2 Magnitude) : "
+          << total_l2 << " ms\n";
+
+std::cout << "----------------------------------------\n";
+std::cout << "Bottleneck Stage : "
+          << bottleneck << "\n";
+
+std::cout << "Cycles           : "
+          << max_cycles << "\n";
+
+std::cout << "----------------------------------------\n";
+
+std::cout << "\nPercentage Breakdown (L1 Pipeline)\n";
+
+std::cout << "Gaussian Blur : "
+          << (100.0 * ms_gaussian / total_l1)
+          << "%\n";
+
+std::cout << "Sobel Gx/Gy   : "
+          << (100.0 * ms_sobel / total_l1)
+          << "%\n";
+
+std::cout << "Magnitude L1  : "
+          << (100.0 * ms_mag_l1 / total_l1)
+          << "%\n";
+
+std::cout << "Direction     : "
+          << (100.0 * ms_dir / total_l1)
+          << "%\n";
+
+std::cout << "========================================\n";
 
     // Save outputs
     std::cout << "\nSaving outputs to disk...\n";
