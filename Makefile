@@ -11,7 +11,7 @@ RV_CXX     = riscv64-linux-gnu-g++
 # ──────────────────────────────────────────────────────────────────────────────
 # QEMU User Space Emulator Configuration
 # ──────────────────────────────────────────────────────────────────────────────
-QEMU_BIN   = /usr/bin/qemu-riscv64
+QEMU_BIN   = $(HOME)/qemu/build/qemu-riscv64
 QEMU_L     = /usr/riscv64-linux-gnu
 QEMU       = $(QEMU_BIN) -cpu rv64,v=true,vlen=128 -L $(QEMU_L)
 

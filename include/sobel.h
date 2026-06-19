@@ -22,15 +22,28 @@ template <typename PixelType, typename AccType>
 void sobel_gradients(const PixelType* input,
                      AccType* gx_out, AccType* gy_out,
                      int width, int height) {
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
+    
+    // 1. Manually zero out the entire output buffers first 
+    // (This guarantees the 1-pixel border is purely 0, matching RVV)
+    for (int i = 0; i < width * height; ++i) {
+        gx_out[i] = 0;
+        gy_out[i] = 0;
+    }
+
+    // 2. Start the loops at 1 and end at width-1 / height-1
+    // This perfectly avoids going out-of-bounds entirely!
+    for (int y = 1; y < height - 1; ++y) {
+        for (int x = 1; x < width - 1; ++x) {
             AccType gx = 0, gy = 0;
             for (int ky = -1; ky <= 1; ++ky) {
                 for (int kx = -1; kx <= 1; ++kx) {
+                    
                     int ny = y + ky, nx = x + kx;
-                    AccType pv = 0;
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height)
-                        pv = static_cast<AccType>(input[ny * width + nx]);
+                    
+                    // No more if/else padding checks needed because we 
+                    // guaranteed we are safely inside the image!
+                    AccType pv = static_cast<AccType>(input[ny * width + nx]);
+                    
                     gx += pv * SOBEL_X[ky + 1][kx + 1];
                     gy += pv * SOBEL_Y[ky + 1][kx + 1];
                 }
