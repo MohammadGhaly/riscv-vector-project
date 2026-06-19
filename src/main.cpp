@@ -2,228 +2,186 @@
 #include <string>
 #include <cstdio>
 #include <cstdint>
+#include <cmath>
+#include <cstdlib>
+
 #include "../include/image.h"
 #include "../include/gaussian_blur.h"
 #include "../include/sobel.h"
+#include "canny_rvv.h"
 
-// RISC-V cycle counter — works on QEMU bare-metal
-// QEMU simulates cycle counter at 1 GHz so: ms = cycles / 1,000,000
+// RISC-V cycle counter
 static inline uint64_t read_cycles() {
     uint64_t cycles;
     asm volatile ("rdcycle %0" : "=r"(cycles));
     return cycles;
 }
 
-int main(int argc, char** argv) {
-    // Stage 1: Check argument count
-    if (argc < 4) {
-        std::cerr << "Error: Missing arguments!\n";
-        std::cerr << "How to use: " << argv[0] << " <image_name.raw> <width> <height>\n";
+// Verification helper
+void verify_buffers(const uint8_t* scalar,
+                    const uint8_t* rvv,
+                    int total_pixels,
+                    const char* stage_name)
+{
+    for (int i = 0; i < total_pixels; i++) {
+        if (std::abs((int)scalar[i] - (int)rvv[i]) > 1) {
+            std::cerr << "\n[CRITICAL ERROR] Mismatch in " << stage_name
+                      << " at index " << i
+                      << " Scalar=" << (int)scalar[i]
+                      << " RVV=" << (int)rvv[i] << "\n";
+            std::exit(1);
+        }
+    }
+    std::cout << "[SUCCESS] " << stage_name << " matches.\n";
+}
+
+int main(int argc, char** argv)
+{
+    if (argc != 4) {
+        std::cerr << "Usage: " << argv[0]
+                  << " <image.raw> <width> <height>\n";
         return 1;
     }
-    if (argc > 4) {
-        std::cerr << "Warning: Extra arguments ignored. Expected exactly 3 arguments.\n";
-    }
 
-    // Stage 2: Parse width and height
-    int width = 0, height = 0;
-    try {
-        width  = std::stoi(argv[2]);
-        height = std::stoi(argv[3]);
-    } catch (...) {
-        std::cerr << "Error: Width and height must be valid numbers!\n";
-        return 1;
-    }
+    int width = std::stoi(argv[2]);
+    int height = std::stoi(argv[3]);
 
-    // Stage 3: Check for negative or zero dimensions
-    if (width <= 0 || height <= 0) {
-        std::cerr << "Error: Width and height must be positive, non-zero numbers!\n";
-        return 1;
-    }
-
-    // Stage 4: Check if the file exists on disk
     const char* input_file = argv[1];
+
     FILE* f = std::fopen(input_file, "rb");
     if (!f) {
-        std::cerr << "Error: File not found or cannot be opened: " << input_file << "\n";
+        std::cerr << "Cannot open file\n";
         return 1;
     }
     std::fclose(f);
 
-    // Pipeline begins
-    std::cout << "Loading image: " << input_file
-              << " (" << width << "x" << height << ")...\n";
     Image img_in = image_load(input_file, width, height);
 
-    // Output canvases
-    Image img_blur   = image_create(width, height);
-    Image img_mag_L1 = image_create(width, height);
-    Image img_mag_L2 = image_create(width, height);
-    Image img_dir    = image_create(width, height);
+    Image img_blur       = image_create(width, height);
+    Image img_blur_rvv   = image_create(width, height);
 
-    // Allocate separate Gx/Gy buffers (SoA layout for RVV readiness)
+    Image img_mag_L1     = image_create(width, height);
+    Image img_mag_L1_rvv = image_create(width, height);
+
+    Image img_mag_L2     = image_create(width, height);
+    Image img_dir        = image_create(width, height);
+
     int n = width * height;
-    int* gx = new int[n];
-    int* gy = new int[n];
+
+    int16_t* gx      = new int16_t[n];
+    int16_t* gy      = new int16_t[n];
+
+    int16_t* gx_rvv  = new int16_t[n];
+    int16_t* gy_rvv  = new int16_t[n];
 
     const int RUNS = 100;
     uint64_t c0, c1;
 
-    // ── Stage 1: Gaussian Blur ─────────────────────────────────────────────
+    std::cout << "\n--- SCALAR PIPELINE ---\n";
+
     c0 = read_cycles();
-    for (int i = 0; i < RUNS; ++i)
-        gaussian_blur_5x5<uint8_t, int>(img_in.data, img_blur.data, width, height);
+    for (int i = 0; i < RUNS; i++)
+        gaussian_blur_5x5<uint8_t,int>(img_in.data, img_blur.data, width, height);
     c1 = read_cycles();
     uint64_t cycles_gaussian = (c1 - c0) / RUNS;
 
-    // ── Stage 2: Sobel Gradients ───────────────────────────────────────────
     c0 = read_cycles();
-    for (int i = 0; i < RUNS; ++i)
-        sobel_gradients<uint8_t, int>(img_blur.data, gx, gy, width, height);
+    for (int i = 0; i < RUNS; i++)
+        sobel_gradients<uint8_t,int16_t>(img_blur.data, gx, gy, width, height);
     c1 = read_cycles();
     uint64_t cycles_sobel = (c1 - c0) / RUNS;
 
-    // ── Stage 3a: Magnitude L1 ─────────────────────────────────────────────
     c0 = read_cycles();
-    for (int i = 0; i < RUNS; ++i)
-        sobel_magnitude<int, uint8_t>(gx, gy, img_mag_L1.data, width, height, false);
+    for (int i = 0; i < RUNS; i++)
+        sobel_magnitude<int16_t,uint8_t>(gx, gy, img_mag_L1.data, width, height, false);
     c1 = read_cycles();
-    uint64_t cycles_mag_l1 = (c1 - c0) / RUNS;
+    uint64_t cycles_mag = (c1 - c0) / RUNS;
 
-    // ── Stage 3b: Magnitude L2 ─────────────────────────────────────────────
+    std::cout << "\n--- RVV PIPELINE ---\n";
+
     c0 = read_cycles();
-    for (int i = 0; i < RUNS; ++i)
-        sobel_magnitude<int, uint8_t>(gx, gy, img_mag_L2.data, width, height, true);
+    for (int i = 0; i < RUNS; i++)
+        gaussian_blur_5x5_rvv(img_in.data, img_blur_rvv.data, width, height);
     c1 = read_cycles();
-    uint64_t cycles_mag_l2 = (c1 - c0) / RUNS;
+    uint64_t cycles_gaussian_rvv = (c1 - c0) / RUNS;
 
-    // ── Stage 4: Direction ─────────────────────────────────────────────────
     c0 = read_cycles();
-    for (int i = 0; i < RUNS; ++i)
-        sobel_direction<int, uint8_t>(gx, gy, img_dir.data, width, height);
+    for (int i = 0; i < RUNS; i++)
+        sobel_gradients_rvv(img_blur.data, gx_rvv, gy_rvv, width, height);
     c1 = read_cycles();
-    uint64_t cycles_dir = (c1 - c0) / RUNS;
-// ── Profiling Summary ──────────────────────────────────────────────────
+    uint64_t cycles_sobel_rvv = (c1 - c0) / RUNS;
 
-// Approximate conversion assuming 1 GHz simulated clock
-double ms_gaussian = cycles_gaussian / 1e6;
-double ms_sobel    = cycles_sobel    / 1e6;
-double ms_mag_l1   = cycles_mag_l1   / 1e6;
-double ms_mag_l2   = cycles_mag_l2   / 1e6;
-double ms_dir      = cycles_dir      / 1e6;
+    c0 = read_cycles();
+    for (int i = 0; i < RUNS; i++)
+        magnitude_l1_rvv(gx_rvv, gy_rvv, img_mag_L1_rvv.data, n);
+    c1 = read_cycles();
+    uint64_t cycles_mag_rvv = (c1 - c0) / RUNS;
 
-// Two valid pipeline configurations
-double total_l1 =
-    ms_gaussian +
-    ms_sobel +
-    ms_mag_l1 +
-    ms_dir;
+    // ---------------- VALIDATION ----------------
 
-double total_l2 =
-    ms_gaussian +
-    ms_sobel +
-    ms_mag_l2 +
-    ms_dir;
+    std::cout << "\n--- VALIDATION ---\n";
 
-// Bottleneck detection
-uint64_t max_cycles = cycles_gaussian;
-const char* bottleneck = "Gaussian Blur";
+    verify_buffers(img_blur.data, img_blur_rvv.data, n, "Gaussian Blur");
 
-if (cycles_sobel > max_cycles) {
-    max_cycles = cycles_sobel;
-    bottleneck = "Sobel Gx/Gy";
-}
+    bool ok = true;
+    for (int i = 0; i < n; i++) {
+        if (gx[i] != gx_rvv[i] || gy[i] != gy_rvv[i]) {
+            ok = false;
+            break;
+        }
+    }
 
-if (cycles_mag_l1 > max_cycles) {
-    max_cycles = cycles_mag_l1;
-    bottleneck = "Magnitude L1";
-}
+    if (ok)
+        std::cout << "[SUCCESS] Sobel Gx/Gy RVV matches scalar baseline.\n";
+    else {
+        std::cerr << "[ERROR] Sobel mismatch.\n";
+        return 1;
+    }
 
-if (cycles_mag_l2 > max_cycles) {
-    max_cycles = cycles_mag_l2;
-    bottleneck = "Magnitude L2";
-}
+    verify_buffers(img_mag_L1.data,
+                   img_mag_L1_rvv.data,
+                   n,
+                   "Magnitude L1");
 
-if (cycles_dir > max_cycles) {
-    max_cycles = cycles_dir;
-    bottleneck = "Direction";
-}
+    // ---------------- PERFORMANCE ----------------
 
-std::cout << "\n========================================\n";
-std::cout << "PHASE 5 PROFILING RESULTS\n";
-std::cout << "Average over " << RUNS << " runs\n";
-std::cout << "========================================\n";
+    std::cout << "\n--- PERFORMANCE ---\n";
 
-std::cout << "\nGaussian Blur\n";
-std::cout << "  Cycles : " << cycles_gaussian << "\n";
-std::cout << "  Time   : " << ms_gaussian << " ms\n";
+    std::printf("Gaussian Blur | %lu | %lu | %.2fx\n",
+        cycles_gaussian,
+        cycles_gaussian_rvv,
+        (double)cycles_gaussian / cycles_gaussian_rvv);
 
-std::cout << "\nSobel Gx/Gy\n";
-std::cout << "  Cycles : " << cycles_sobel << "\n";
-std::cout << "  Time   : " << ms_sobel << " ms\n";
+    std::printf("Sobel         | %lu | %lu | %.2fx\n",
+        cycles_sobel,
+        cycles_sobel_rvv,
+        (double)cycles_sobel / cycles_sobel_rvv);
 
-std::cout << "\nMagnitude L1\n";
-std::cout << "  Cycles : " << cycles_mag_l1 << "\n";
-std::cout << "  Time   : " << ms_mag_l1 << " ms\n";
+    std::printf("Magnitude     | %lu | %lu | %.2fx\n",
+        cycles_mag,
+        cycles_mag_rvv,
+        (double)cycles_mag / cycles_mag_rvv);
 
-std::cout << "\nMagnitude L2\n";
-std::cout << "  Cycles : " << cycles_mag_l2 << "\n";
-std::cout << "  Time   : " << ms_mag_l2 << " ms\n";
+    // ---------------- SAVE ----------------
 
-std::cout << "\nDirection\n";
-std::cout << "  Cycles : " << cycles_dir << "\n";
-std::cout << "  Time   : " << ms_dir << " ms\n";
+    image_save(img_blur, "blur.raw");
+    image_save(img_mag_L1, "mag.raw");
 
-std::cout << "\n----------------------------------------\n";
-std::cout << "Pipeline (L1 Magnitude) : "
-          << total_l1 << " ms\n";
+    // ---------------- CLEANUP ----------------
 
-std::cout << "Pipeline (L2 Magnitude) : "
-          << total_l2 << " ms\n";
+    delete[] gx;
+    delete[] gy;
+    delete[] gx_rvv;
+    delete[] gy_rvv;
 
-std::cout << "----------------------------------------\n";
-std::cout << "Bottleneck Stage : "
-          << bottleneck << "\n";
-
-std::cout << "Cycles           : "
-          << max_cycles << "\n";
-
-std::cout << "----------------------------------------\n";
-
-std::cout << "\nPercentage Breakdown (L1 Pipeline)\n";
-
-std::cout << "Gaussian Blur : "
-          << (100.0 * ms_gaussian / total_l1)
-          << "%\n";
-
-std::cout << "Sobel Gx/Gy   : "
-          << (100.0 * ms_sobel / total_l1)
-          << "%\n";
-
-std::cout << "Magnitude L1  : "
-          << (100.0 * ms_mag_l1 / total_l1)
-          << "%\n";
-
-std::cout << "Direction     : "
-          << (100.0 * ms_dir / total_l1)
-          << "%\n";
-
-std::cout << "========================================\n";
-
-    // Save outputs
-    std::cout << "\nSaving outputs to disk...\n";
-    image_save(img_blur,   "output_1_blur.raw");
-    image_save(img_mag_L1, "output_2_magnitude_L1.raw");
-    image_save(img_mag_L2, "output_2_magnitude_L2.raw");
-    image_save(img_dir,    "output_3_direction.raw");
-
-    // Cleanup
     image_free(img_in);
     image_free(img_blur);
+    image_free(img_blur_rvv);
     image_free(img_mag_L1);
+    image_free(img_mag_L1_rvv);
     image_free(img_mag_L2);
     image_free(img_dir);
 
-    std::cout << "Pipeline completed successfully!\n";
+    std::cout << "\nDone.\n";
     return 0;
 }
