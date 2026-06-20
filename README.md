@@ -8,12 +8,12 @@ Phase 3: Testing involves developing test suites to verify algorithmic accuracy 
 
 | Test Category | Environment | Description / Goal |
 | :--- | :--- | :--- |
-| **Gaussian Blur** | Host-Side (GoogleTest) | [cite_start]Verify uniform images remain uniform, black images remain black, and a single bright pixel spreads symmetrically. |
-| **Sobel Gradient** | Host-Side (GoogleTest) | [cite_start]Verify uniform images produce zero gradient, vertical edges produce large Gx, and horizontal edges produce large Gy. |
-| **Gradient Direction** | Host-Side (GoogleTest) | [cite_start]Ensure vertical edges return direction 0, horizontal return 2, and diagonal return 1 or 3. |
-| **Gradient Magnitude** | Host-Side (GoogleTest) | [cite_start]Confirm both L1 and L2 norms calculate correctly on random images without crashing or outputting all-zeros. |
-| **Scalar vs. RVV Equivalence** | QEMU-Side (Asserts) | Compare the output of the C++ scalar code against the RVV code. [cite_start]Outputs must match (with a ±1 rounding tolerance) across `VLEN=128`, `256`, and `512`. |
-| **Strip-Mining Tail Logic** | QEMU-Side (Asserts) | [cite_start]Use non-power-of-two image sizes (e.g., 48x48 or 100x75) to force the vector loop's "tail case" to execute, ensuring the code is fully vector-length-agnostic (VLA). |
+| **Gaussian Blur** | Host-Side (GoogleTest) | Verify uniform images remain uniform, black images remain black, and a single bright pixel spreads symmetrically. |
+| **Sobel Gradient** | Host-Side (GoogleTest) | Verify uniform images produce zero gradient, vertical edges produce large Gx, and horizontal edges produce large Gy. |
+| **Gradient Direction** | Host-Side (GoogleTest) | Ensure vertical edges return direction 0, horizontal return 2, and diagonal return 1 or 3. |
+| **Gradient Magnitude** | Host-Side (GoogleTest) | Confirm both L1 and L2 norms calculate correctly on random images without crashing or outputting all-zeros. |
+| **Scalar vs. RVV Equivalence** | QEMU-Side (Asserts) | Compare the output of the C++ scalar code against the RVV code. Outputs must match (with a ±1 rounding tolerance) across `VLEN=128`, `256`, and `512`. |
+| **Strip-Mining Tail Logic** | QEMU-Side (Asserts) | Use non-power-of-two image sizes (e.g., 48x48 or 100x75) to force the vector loop's "tail case" to execute, ensuring the code is fully vector-length-agnostic (VLA). |
 
 Phase 4: Compiler Optimization Sweep involves establishing a performance baseline by compiling your scalar code at multiple optimization levels (such as -O0, -O2, and -O3) and measuring both the execution time and binary size. Because QEMU is not cycle-accurate, you must use wall-clock timing (clock_gettime) over multiple iterations to get stable measurements. Additionally, this phase requires you to analyze the compiler's auto-vectorization capabilities by using specific GCC flags to see which loops the compiler managed to vectorize, and counting the vector instructions in the generated disassembly.
 
@@ -76,3 +76,7 @@ Phase 6: RVV Intrinsic Optimization focuses on replacing your pipeline's perform
 | **Gaussian** | 0.55x | 0.57x | 0.62x |
 | **Sobel** | 0.89x | 0.95x | 1.03x |
 | **Magnitude** | 0.37x | 0.42x | 0.42x |
+
+What AI suggested: First tried simple fixes — absolute paths, copying the file into the build folder, adding QEMU's -L flag. None worked. Then found the real cause: our binary was built with the bare-metal toolchain, which can't access files at all under QEMU.
+What we changed/corrected: Installed the Linux RISC-V toolchain (gcc-riscv64-linux-gnu), updated the Makefile to use it, and added -L /usr/riscv64-linux-gnu to the QEMU command so it could find the runtime loader.
+What we learned: File path tricks won't fix a toolchain problem. The real clue was running file ./canny_rv and seeing "statically linked" — that's what told us the binary type itself was wrong, not the path.
